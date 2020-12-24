@@ -1,6 +1,6 @@
 {
   "name": "abdl",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Audio Bible Downloader",
   "devDependencies": {
     "eslint": "^7.15.0"
