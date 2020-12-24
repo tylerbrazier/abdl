@@ -153,7 +153,7 @@ async function mkdir(translationId, bookId) {
     await printBookList(translationId, console.error);
     throw Error('Did not find book id: ' + bookId);
   }
-  const dirname = entry.human.replaceAll(' ', '_');
+  const dirname = entry.human.replace(/\s+/g, '_');
   console.log('Making directory ' + dirname)
   await fs.promises.mkdir(dirname, { recursive: true });
   return dirname;
