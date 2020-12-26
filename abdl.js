@@ -56,10 +56,10 @@ async function main() {
 
     const dirname = await mkdir(translationId, bookId);
 
-    let outputPath, audioUrl, data;
+    let audioUrl, chapterName, outputPath, data;
     for (let c = start; c <= (end || start); c++) {
-      outputPath = getOutputFilePath(dirname, c);
-      audioUrl = await getAudioUrl(translationId, bookId, c);
+      ({ audioUrl, chapterName } = await fetchMetadata(translationId, bookId, c));
+      outputPath = getOutputFilePath(dirname, chapterName);
       data = await download(audioUrl);
 
       console.log('Writing to ' + outputPath);
@@ -148,26 +148,29 @@ async function fetchJson(url) {
 async function mkdir(translationId, bookId) {
   // get the 'human' name for the book
   const items = await fetchBookList(translationId);
-  const entry = items.find(item => item.usfm === bookId);
-  if (!entry) {
+  const index = items.findIndex(item => item.usfm === bookId);
+  if (index < 0) {
     await printBookList(translationId, console.error);
     throw Error('Did not find book id: ' + bookId);
   }
-  const dirname = entry.human.replace(/\s+/g, '_');
+  // e.g. dirname: 1-Genesis or 9-1_Samuel
+  const dirname = `${index+1}-${items[index].human.replace(/\s+/g, '_')}`;
   console.log('Making directory ' + dirname)
   await fs.promises.mkdir(dirname, { recursive: true });
   return dirname;
 }
 
-async function getAudioUrl(translationId, bookId, chapter) {
+async function fetchMetadata(translationId, bookId, chapter) {
   // e.g. https://nodejs.bible.com/api/bible/chapter/3.1?id=100&reference=PSA.25
   const metaUrl = 'https://nodejs.bible.com/api/bible/chapter/3.1?' +
     `id=${translationId}&reference=${bookId}.${chapter}`;
   console.log(`Fetching metadata for ${bookId}.${chapter}`);
   const json = await fetchJson(metaUrl);
   validateMetadataResponse(json);
-  const audioUrl = json.audio[0].download_urls.format_mp3_32k;
-  return audioUrl.startsWith('//') ? 'https:' + audioUrl : audioUrl
+  const chapterName = json.reference.human;
+  let audioUrl = json.audio[0].download_urls.format_mp3_32k;
+  audioUrl = audioUrl.startsWith('//') ? ('https:' + audioUrl) : audioUrl;
+  return { audioUrl, chapterName };
 }
 
 // It would be better to stream the download directly to the output file rather
@@ -199,7 +202,9 @@ function validateMetadataResponse(json) {
     !Array.isArray(json.audio) ||
     !json.audio.length ||
     !json.audio[0].download_urls ||
-    !json.audio[0].download_urls.format_mp3_32k
+    !json.audio[0].download_urls.format_mp3_32k ||
+    !json.reference ||
+    !json.reference.human
   ) {
     throw Error('Unexpected response:\n' + JSON.stringify(json, null, 2));
   }
@@ -211,8 +216,8 @@ function validateResponseHasItems(json) {
   }
 }
 
-function getOutputFilePath(dirname, chapter) {
-  return path.join(dirname, `${path.basename(dirname)}_${chapter}.mp3`);
+function getOutputFilePath(dirname, chapterName) {
+  return path.join(dirname, chapterName.replace(/\s+/g, '_') + '.mp3');
 }
 
 function parseChapters(chapterArg) {
