@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Audio Bible Downloader
+// The bible api can be figured out by watching the network traffic of bible.com
+
 const path = require('path');
 const https = require('https');
 const fs = require('fs');
