@@ -50,17 +50,13 @@ async function main() {
       throw Error('book id required');
     }
 
-    if (!chapters) {
-      printHelp(console.error);
-      throw Error('chapter(s) required');
-    }
-
-    const [ start, end ] = parseChapters(chapters);
+    const [ start, end ] = await getChapterRange(translationId, bookId, chapters);
 
     const dirname = await mkdir(translationId, bookId);
 
+    console.log(`Downloading chapters ${start}-${end}`);
     let audioUrl, chapterName, outputPath, data;
-    for (let c = start; c <= (end || start); c++) {
+    for (let c = start; c <= end; c++) {
       ({ audioUrl, chapterName } = await fetchMetadata(translationId, bookId, c));
       outputPath = getOutputFilePath(dirname, chapterName);
       data = await download(audioUrl);
@@ -200,6 +196,27 @@ async function download(url) {
   });
 }
 
+async function getChapterRange(translationId, bookId, chapterArg) {
+  // if no chapters are specified by the user, get all of them
+  if (!chapterArg) {
+    console.log('Fetching chapters for ' + bookId);
+    const url = `https://www.bible.com/json/bible/books/${translationId}/${bookId}/chapters`;
+    const json = await fetchJson(url);
+    validateResponseHasItems(json);
+    return [ 1, json.items.length ];
+  }
+
+  if (!chapterArg.match(/^\d+(-\d+)?$/)) {
+    throw Error('Chapter must be a number or a range (e.g. 3-5)');
+  }
+  const result = chapterArg.split('-').map(Number)
+  if (result[1] && (result[1] <= result[0])) {
+    throw Error('Invalid range: ' + chapterArg);
+  }
+  result[1] = result[1] || result[0]; // if end isn't given, use start as end
+  return result;
+}
+
 function validateMetadataResponse(json) {
   if (
     !Array.isArray(json.audio) ||
@@ -214,7 +231,7 @@ function validateMetadataResponse(json) {
 }
 
 function validateResponseHasItems(json) {
-  if (!json.items) {
+  if (!Array.isArray(json.items)) {
     throw Error('Unexpected response:\n' + JSON.stringify(json, null, 2));
   }
 }
@@ -223,24 +240,14 @@ function getOutputFilePath(dirname, chapterName) {
   return path.join(dirname, chapterName.replace(/\s+/g, '_') + '.mp3');
 }
 
-function parseChapters(chapterArg) {
-  if (!chapterArg.match(/^\d+(-\d+)?$/)) {
-    throw Error('Chapter must be a number or a range (e.g. 3-5)');
-  }
-  const result = chapterArg.split('-').map(Number)
-  if (result[1] && (result[1] <= result[0])) {
-    throw Error('Invalid range: ' + chapterArg);
-  }
-  return result;
-}
-
 function printHelp(logFn = console.log) {
   const thisfile = path.basename(__filename);
   logFn('Download audio bible files into the current directory.');
-  logFn(`Usage: node ${thisfile} [options] <book id> <chapter(s)>`);
+  logFn(`Usage: node ${thisfile} [options] <book id> [chapter(s)]`);
   logFn('\t-h  help');
   logFn('\t-l  list books ids');
   logFn('\t-i  list translation ids');
   logFn(`\t-t  use translation id (default ${defaultTranslationId})`);
   logFn(`e.g. node ${thisfile} -t100 PSA 27-34`);
+  logFn('If no chapters are specified, all of them will be downloaded.');
 }
