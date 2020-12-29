@@ -95,7 +95,7 @@ async function getArgs() {
     } else if (result.bookId) {
       result.chapters = arg;
     } else {
-      result.bookId = arg;
+      result.bookId = arg.toUpperCase();
     }
   }
   return result;
