@@ -19,6 +19,7 @@ async function main() {
       listTranslations,
       listBooks,
       translationId,
+      canonical,
       bookId,
       chapters,
     } = await getArgs();
@@ -52,7 +53,7 @@ async function main() {
 
     const [ start, end ] = await getChapterRange(translationId, bookId, chapters);
 
-    const dirname = await mkdir(translationId, bookId);
+    const dirname = await mkdir(translationId, bookId, canonical);
 
     console.log(`Downloading chapters ${start}-${end}`);
     let audioUrl, chapterName, outputPath, data;
@@ -73,16 +74,25 @@ async function main() {
 }
 
 async function getArgs() {
-  const result = { translationId: defaultTranslationId }
+  const result = {
+    help: false,
+    listBooks: false,
+    listTranslations: false,
+    canonical: false,
+    translationId: defaultTranslationId,
+    chapters: null,
+    bookId: null,
+  }
   for (let i = 2; i < process.argv.length; i++) {
     const arg = process.argv[i];
-
     if (arg === '-h') {
       result.help = true;
     } else if (arg === '-l') {
       result.listBooks = true;
     } else if (arg === '-i') {
       result.listTranslations = true;
+    } else if (arg === '-c') {
+      result.canonical = true;
     } else if (arg === '-t') {
       result.translationId = process.argv[i + 1];
       i++;
@@ -144,7 +154,8 @@ async function fetchJson(url) {
   })
 }
 
-async function mkdir(translationId, bookId) {
+// returns the name of the created dir
+async function mkdir(translationId, bookId, canonical) {
   // get the 'human' name for the book
   const items = await fetchBookList(translationId);
   const index = items.findIndex(item => item.usfm === bookId);
@@ -152,8 +163,11 @@ async function mkdir(translationId, bookId) {
     await printBookList(translationId, console.error);
     throw Error('Did not find book id: ' + bookId);
   }
-  // e.g. dirname: 1-Genesis or 9-1_Samuel
-  const dirname = `${index+1}-${items[index].human.replace(/\s+/g, '_')}`;
+  let dirname = items[index].human.replace(/\s+/g, '_');
+  if (canonical) {
+    // precede directory book names with their canonical number e.g. 02-Exodus
+    dirname = `${String(index+1).padStart(2, '0')}-${dirname}`;
+  }
   console.log('Making directory ' + dirname)
   await fs.promises.mkdir(dirname, { recursive: true });
   return dirname;
@@ -248,6 +262,7 @@ function printHelp(logFn = console.log) {
   logFn('\t-l  list books ids');
   logFn('\t-i  list translation ids');
   logFn(`\t-t  use translation id (default ${defaultTranslationId})`);
+  logFn(`\t-c  precede directory book names with their canonical number`);
   logFn(`e.g. node ${thisfile} -t100 PSA 27-34`);
   logFn('If no chapters are specified, all of them will be downloaded.');
 }
