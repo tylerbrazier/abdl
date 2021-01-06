@@ -65,7 +65,7 @@ async function main() {
       console.log('Writing to ' + outputPath);
       await fs.promises.writeFile(outputPath, data);
     }
-    console.log('Done');
+    console.log('It is finished');
 
   } catch (err) {
     console.error(err)
