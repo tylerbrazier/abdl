@@ -51,15 +51,17 @@ async function main() {
       throw Error('book id required');
     }
 
-    const [ start, end ] = await getChapterRange(translationId, bookId, chapters);
+    const [ start, end, total ] = await getChapterRange(translationId, bookId, chapters);
 
-    const dirname = await mkdir(translationId, bookId, canonical);
+    const { bookName, canonicalIndex } = await fetchBookInfo(translationId, bookId);
+
+    const dirname = await mkdir(bookName, canonical && canonicalIndex);
 
     console.log(`Downloading chapters ${start}-${end}`);
-    let audioUrl, chapterName, outputPath, data;
+    let audioUrl, outputPath, data;
     for (let c = start; c <= end; c++) {
-      ({ audioUrl, chapterName } = await fetchMetadata(translationId, bookId, c));
-      outputPath = getOutputFilePath(dirname, chapterName);
+      audioUrl = await fetchAudioUrl(translationId, bookId, c);
+      outputPath = getOutputFilePath(dirname, bookName, c, total);
       data = await download(audioUrl);
 
       console.log('Writing to ' + outputPath);
@@ -155,35 +157,39 @@ async function fetchJson(url) {
 }
 
 // returns the name of the created dir
-async function mkdir(translationId, bookId, canonical) {
-  // get the 'human' name for the book
-  const items = await fetchBookList(translationId);
-  const index = items.findIndex(item => item.usfm === bookId);
-  if (index < 0) {
-    await printBookList(translationId, console.error);
-    throw Error('Did not find book id: ' + bookId);
-  }
-  let dirname = items[index].human.replace(/\s+/g, '_');
-  if (canonical) {
+async function mkdir(bookName, canonicalIndex) {
+  let dirname = bookName;
+  if (canonicalIndex) {
     // precede directory book names with their canonical number e.g. 02-Exodus
-    dirname = `${String(index+1).padStart(2, '0')}-${dirname}`;
+    dirname = `${String(canonicalIndex).padStart(2, '0')}-${dirname}`;
   }
   console.log('Making directory ' + dirname)
   await fs.promises.mkdir(dirname, { recursive: true });
   return dirname;
 }
 
-async function fetchMetadata(translationId, bookId, chapter) {
+async function fetchBookInfo(translationId, bookId) {
+  const items = await fetchBookList(translationId);
+  const index = items.findIndex(item => item.usfm === bookId);
+  if (index < 0) {
+    await printBookList(translationId, console.error);
+    throw Error('Did not find book id: ' + bookId);
+  }
+  return {
+    bookName: items[index].human.replace(/\s+/g, '_'),
+    canonicalIndex: index+1,
+  }
+}
+
+async function fetchAudioUrl(translationId, bookId, chapter) {
   // e.g. https://nodejs.bible.com/api/bible/chapter/3.1?id=100&reference=PSA.25
   const metaUrl = 'https://nodejs.bible.com/api/bible/chapter/3.1?' +
     `id=${translationId}&reference=${bookId}.${chapter}`;
   console.log(`Fetching metadata for ${bookId}.${chapter}`);
   const json = await fetchJson(metaUrl);
   validateMetadataResponse(json);
-  const chapterName = json.reference.human;
-  let audioUrl = json.audio[0].download_urls.format_mp3_32k;
-  audioUrl = audioUrl.startsWith('//') ? ('https:' + audioUrl) : audioUrl;
-  return { audioUrl, chapterName };
+  const audioUrl = json.audio[0].download_urls.format_mp3_32k;
+  return audioUrl.startsWith('//') ? ('https:' + audioUrl) : audioUrl;
 }
 
 // It would be better to stream the download directly to the output file rather
@@ -210,25 +216,31 @@ async function download(url) {
   });
 }
 
+// Returns an array with three entries: [ start, end, total ].
+// For an input like `GEN 10-20` this would return [ 10, 20, 50 ].
 async function getChapterRange(translationId, bookId, chapterArg) {
-  // if no chapters are specified by the user, get all of them
-  if (!chapterArg) {
-    console.log('Fetching chapters for ' + bookId);
-    const url = `https://www.bible.com/json/bible/books/${translationId}/${bookId}/chapters`;
-    const json = await fetchJson(url);
-    validateResponseHasItems(json);
-    return [ 1, json.items.length ];
-  }
-
-  if (!chapterArg.match(/^\d+(-\d+)?$/)) {
+  if (chapterArg && !chapterArg.match(/^\d+(-\d+)?$/)) {
     throw Error('Chapter must be a number or a range (e.g. 3-5)');
   }
-  const result = chapterArg.split('-').map(Number)
-  if (result[1] && (result[1] <= result[0])) {
+
+  console.log('Fetching chapters for ' + bookId);
+  const url = `https://www.bible.com/json/bible/books/${translationId}/${bookId}/chapters`;
+  const json = await fetchJson(url);
+  validateResponseHasItems(json);
+  const total = json.items.length;
+
+  // if no chapters are specified by the user, download all of them
+  if (!chapterArg) {
+    return [ 1, total, total ];
+  }
+
+  const range = chapterArg.split('-').map(Number)
+  if (range[1] && (range[1] <= range[0])) {
     throw Error('Invalid range: ' + chapterArg);
   }
-  result[1] = result[1] || result[0]; // if end isn't given, use start as end
-  return result;
+
+  range[1] = range[1] || range[0]; // if end isn't given, use start as end
+  return range.concat(total);
 }
 
 function validateMetadataResponse(json) {
@@ -236,9 +248,9 @@ function validateMetadataResponse(json) {
     !Array.isArray(json.audio) ||
     !json.audio.length ||
     !json.audio[0].download_urls ||
-    !json.audio[0].download_urls.format_mp3_32k ||
-    !json.reference ||
-    !json.reference.human
+    !json.audio[0].download_urls.format_mp3_32k
+    //!json.reference ||
+    //!json.reference.human
   ) {
     throw Error('Unexpected response:\n' + JSON.stringify(json, null, 2));
   }
@@ -250,8 +262,9 @@ function validateResponseHasItems(json) {
   }
 }
 
-function getOutputFilePath(dirname, chapterName) {
-  return path.join(dirname, chapterName.replace(/\s+/g, '_') + '.mp3');
+function getOutputFilePath(dirname, bookName, chapter, totalChapters) {
+  const paddedChapter = String(chapter).padStart(String(totalChapters).length, '0');
+  return path.join(dirname, `${bookName}-${paddedChapter}.mp3`);
 }
 
 function printHelp(logFn = console.log) {
